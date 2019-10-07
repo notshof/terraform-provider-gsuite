@@ -25,6 +25,14 @@ func Provider() *schema.Provider {
 				}, nil),
 				ValidateFunc: validateCredentials,
 			},
+			"access_token": {
+				Type:     schema.TypeString,
+				Optional: true,
+				DefaultFunc: schema.MultiEnvDefaultFunc([]string{
+					"GOOGLE_OAUTH_ACCESS_TOKEN",
+				}, nil),
+				ConflictsWith: []string{"credentials"},
+			},
 			"impersonated_user_email": {
 				Type:     schema.TypeString,
 				Optional: true,
@@ -79,8 +87,13 @@ func oauthScopesFromConfigOrDefault(oauthScopesSet *schema.Set) []string {
 }
 
 func providerConfigure(d *schema.ResourceData, terraformVersion string) (interface{}, error) {
+	var accessToken string
 	var impersonatedUserEmail string
 	var customerID string
+
+	if v, ok := d.GetOk("access_token"); ok {
+		accessToken = v.(string)
+	}
 
 	credentials := d.Get("credentials").(string)
 
@@ -105,6 +118,7 @@ func providerConfigure(d *schema.ResourceData, terraformVersion string) (interfa
 
 	oauthScopes := oauthScopesFromConfigOrDefault(d.Get("oauth_scopes").(*schema.Set))
 	config := Config{
+		AccessToken:           accessToken,
 		Credentials:           credentials,
 		ImpersonatedUserEmail: impersonatedUserEmail,
 		OauthScopes:           oauthScopes,

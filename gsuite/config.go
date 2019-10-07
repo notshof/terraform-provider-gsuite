@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-sdk/helper/logging"
 	"github.com/hashicorp/terraform-plugin-sdk/helper/pathorcontents"
 	"github.com/pkg/errors"
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"golang.org/x/oauth2/jwt"
+
 	directory "google.golang.org/api/admin/directory/v1"
 	groupSettings "google.golang.org/api/groupssettings/v1"
 )
@@ -27,6 +30,9 @@ var defaultOauthScopes = []string{
 // Config is the structure used to instantiate the GSuite provider.
 type Config struct {
 	Credentials string
+
+	AccessToken string
+
 	// Only users with access to the Admin APIs can access the Admin SDK Directory API,
 	// therefore the service account needs to impersonate one of those users to access the Admin SDK Directory API.
 	// See https://developers.google.com/admin-sdk/directory/v1/guides/delegation
@@ -36,9 +42,10 @@ type Config struct {
 
 	OauthScopes []string
 
-	directory *directory.Service
-
+	directory     *directory.Service
 	groupSettings *groupSettings.Service
+
+	tokenSource oauth2.TokenSource
 }
 
 // loadAndValidate loads the application default credentials from the
@@ -50,7 +57,14 @@ func (c *Config) loadAndValidate(terraformVersion string) error {
 	oauthScopes := c.OauthScopes
 
 	var client *http.Client
-	if c.Credentials != "" {
+	if c.AccessToken != "" {
+		tokenSource, err := c.getTokenSource(oauthScopes)
+		if err != nil {
+			return err
+		}
+		c.tokenSource = tokenSource
+		client = oauth2.NewClient(context.Background(), tokenSource)
+	} else if c.Credentials != "" {
 		if c.ImpersonatedUserEmail == "" {
 			return fmt.Errorf("required field missing: impersonated_user_email")
 		}
@@ -99,6 +113,11 @@ func (c *Config) loadAndValidate(terraformVersion string) error {
 	userAgent := fmt.Sprintf("(%s %s) Terraform/%s",
 		runtime.GOOS, runtime.GOARCH, terraformVersion)
 
+	// Each individual request should return within 30s - timeouts will be retried.
+	// This is a timeout for, e.g. a single GET request of an operation - not a
+	// timeout for the maximum amount of time a logical request can take.
+	client.Timeout, _ = time.ParseDuration("30s")
+
 	// Create the directory service.
 	directorySvc, err := directory.New(client)
 	if err != nil {
@@ -131,4 +150,16 @@ func parseJSON(result interface{}, contents string) error {
 	dec := json.NewDecoder(r)
 
 	return dec.Decode(result)
+}
+
+func (c *Config) getTokenSource(oauthScopes []string) (oauth2.TokenSource, error) {
+	contents, _, err := pathorcontents.Read(c.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("Error loading access token: %s", err)
+	}
+
+	log.Printf("[INFO] Authenticating using configured Google JSON 'access_token'")
+	token := &oauth2.Token{AccessToken: contents}
+
+	return oauth2.StaticTokenSource(token), nil
 }
