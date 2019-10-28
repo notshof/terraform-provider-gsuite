@@ -455,20 +455,9 @@ func resourceUserCreate(d *schema.ResourceData, meta interface{}) error {
 	}
 
 	if locatedUser != nil {
-		log.Printf("[INFO] found existing user %s", locatedUser.PrimaryEmail)
-	
-		err = retry(func() error {
-			_, err = config.directory.Users.Update(locatedUser.Id, user).Do()
-			return err
-		}, config.TimeoutMinutes)
-	
-		if err != nil {
-			return fmt.Errorf("[ERROR] Error updating existing user: %s", err)
-		}
-
-		log.Printf("[INFO] Updated user: %s", user.PrimaryEmail)
+		log.Printf("[INFO] Found existing user %s", locatedUser.PrimaryEmail)
 		d.SetId(locatedUser.Id)
-		return resourceUserRead(d, meta)
+		return resourceUserUpdate(d, meta)
 	}
 
 	var createdUser *directory.User
